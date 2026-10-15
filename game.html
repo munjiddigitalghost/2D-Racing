@@ -1,0 +1,306 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Turbo Racer</title>
+<style>
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: #101820;
+  color: white;
+  font-family: Arial, sans-serif;
+  text-align: center;
+}
+h1 { color: #00e5ff; margin: 16px 0 8px; }
+.hud {
+  display: flex;
+  justify-content: space-around;
+  max-width: 420px;
+  margin: 10px auto;
+  font-size: 18px;
+}
+.game {
+  position: relative;
+  width: min(94vw, 400px);
+  margin: auto;
+}
+canvas {
+  display: block;
+  width: 100%;
+  border: 3px solid #00e5ff;
+  border-radius: 10px;
+  background: #303030;
+}
+#overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  background: #000b;
+  border-radius: 10px;
+  padding: 20px;
+}
+#overlay h2 { color: #00e5ff; font-size: 34px; }
+button {
+  border: 0;
+  border-radius: 9px;
+  padding: 12px 22px;
+  margin: 7px;
+  font-size: 17px;
+  font-weight: bold;
+  cursor: pointer;
+  background: #00e5ff;
+  color: #101820;
+}
+.controls {
+  display: flex;
+  justify-content: center;
+  margin: 10px auto;
+  gap: 35px;
+}
+.controls button { width: 100px; font-size: 25px; }
+p { color: #c9d1d9; }
+</style>
+</head>
+<body>
+<h1>🏎️ TURBO RACER</h1>
+
+<div class="hud">
+  <span>Score: <b id="score">0</b></span>
+  <span>Best: <b id="best">0</b></span>
+</div>
+
+<div class="game">
+  <canvas id="canvas" width="400" height="600"></canvas>
+  <div id="overlay">
+    <h2 id="message">TURBO RACER</h2>
+    <p id="instructions">Dodge traffic and survive as long as possible!</p>
+    <button id="start">START RACE</button>
+  </div>
+</div>
+
+<div class="controls">
+  <button id="left" aria-label="Move left">⬅️</button>
+  <button id="right" aria-label="Move right">➡️</button>
+</div>
+<p>Use ← → or A / D to steer. Avoid the traffic!</p>
+
+<script>
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+const scoreEl = document.getElementById("score");
+const bestEl = document.getElementById("best");
+const overlay = document.getElementById("overlay");
+const message = document.getElementById("message");
+const instructions = document.getElementById("instructions");
+const startBtn = document.getElementById("start");
+
+let player, enemies, score, speed, roadLine;
+let running = false;
+let lastTime = 0;
+let spawnTimer = 0;
+let animationId = 0;
+let best = 0;
+
+try {
+  best = Number(localStorage.getItem("turboBest")) || 0;
+} catch {}
+bestEl.textContent = best;
+
+const road = { x: 40, width: 320 };
+const keys = { left: false, right: false };
+const lanes = [95, 165, 235, 305];
+
+function resetGame() {
+  player = { x: 180, y: 490, w: 38, h: 70 };
+  enemies = [];
+  score = 0;
+  speed = 230;
+  roadLine = 0;
+  spawnTimer = 0;
+  scoreEl.textContent = "0";
+}
+
+function drawCar(x, y, color, isPlayer = false) {
+  ctx.fillStyle = "#111";
+  ctx.fillRect(x + 2, y + 8, 7, 17);
+  ctx.fillRect(x + 29, y + 8, 7, 17);
+  ctx.fillRect(x + 2, y + 47, 7, 17);
+  ctx.fillRect(x + 29, y + 47, 7, 17);
+
+  ctx.fillStyle = color;
+  ctx.fillRect(x + 5, y, 28, 70);
+
+  ctx.fillStyle = "#b9f4ff";
+  ctx.fillRect(x + 9, y + 10, 20, 15);
+  ctx.fillRect(x + 9, y + 43, 20, 12);
+
+  ctx.fillStyle = isPlayer ? "#fff176" : "#ff4d4d";
+  ctx.fillRect(x + 7, isPlayer ? y + 2 : y + 64, 8, 4);
+  ctx.fillRect(x + 23, isPlayer ? y + 2 : y + 64, 8, 4);
+
+  if (isPlayer) {
+    ctx.fillStyle = "#00e5ff";
+    ctx.fillRect(x + 16, y + 28, 6, 8);
+  }
+}
+
+function drawRoad(dt) {
+  ctx.fillStyle = "#252525";
+  ctx.fillRect(0, 0, 400, 600);
+
+  ctx.fillStyle = "#147a35";
+  ctx.fillRect(0, 0, 40, 600);
+  ctx.fillRect(360, 0, 40, 600);
+
+  ctx.fillStyle = "#eee";
+  ctx.fillRect(40, 0, 5, 600);
+  ctx.fillRect(355, 0, 5, 600);
+
+  roadLine = (roadLine + speed * dt) % 80;
+  ctx.fillStyle = "#eee";
+  for (let y = -80 + roadLine; y < 600; y += 80) {
+    ctx.fillRect(118, y, 5, 40);
+    ctx.fillRect(198, y, 5, 40);
+    ctx.fillRect(278, y, 5, 40);
+  }
+}
+
+function spawnEnemy() {
+  const lane = lanes[Math.floor(Math.random() * lanes.length)];
+  enemies.push({
+    x: lane - 19,
+    y: -80,
+    w: 38,
+    h: 70,
+    color: ["#ff4040", "#ffb000", "#bd70ff", "#f1f1f1"][
+      Math.floor(Math.random() * 4)
+    ]
+  });
+}
+
+function collision(a, b) {
+  return a.x + 5 < b.x + b.w - 5 &&
+         a.x + a.w - 5 > b.x + 5 &&
+         a.y + 8 < b.y + b.h - 8 &&
+         a.y + a.h - 8 > b.y + 8;
+}
+
+function draw() {
+  drawRoad(0);
+  enemies.forEach(e => drawCar(e.x, e.y, e.color));
+  if (player) drawCar(player.x, player.y, "#00aaff", true);
+}
+
+function endGame() {
+  running = false;
+  best = Math.max(best, Math.floor(score));
+  bestEl.textContent = best;
+  try {
+    localStorage.setItem("turboBest", best);
+  } catch {}
+
+  message.textContent = "💥 GAME OVER";
+  instructions.textContent =
+    "Your score: " + Math.floor(score) + " — Try again!";
+  startBtn.textContent = "RACE AGAIN";
+  overlay.style.display = "flex";
+}
+
+function update(dt) {
+  speed = Math.min(480, 230 + score * 1.2);
+  score += dt * 10;
+  scoreEl.textContent = Math.floor(score);
+
+  if (keys.left) player.x -= 270 * dt;
+  if (keys.right) player.x += 270 * dt;
+  player.x = Math.max(47, Math.min(315, player.x));
+
+  spawnTimer += dt;
+  const spawnDelay = Math.max(0.48, 1.05 - score / 600);
+  if (spawnTimer >= spawnDelay) {
+    spawnTimer = 0;
+    spawnEnemy();
+  }
+
+  for (let i = enemies.length - 1; i >= 0; i--) {
+    const e = enemies[i];
+    e.y += speed * dt;
+
+    if (collision(player, e)) {
+      endGame();
+      return;
+    }
+    if (e.y > 610) enemies.splice(i, 1);
+  }
+}
+
+function loop(time) {
+  if (!running) return;
+  const dt = Math.min((time - lastTime) / 1000 || 0, 0.035);
+  lastTime = time;
+
+  update(dt);
+  drawRoad(dt);
+  enemies.forEach(e => drawCar(e.x, e.y, e.color));
+  drawCar(player.x, player.y, "#00aaff", true);
+
+  if (running) animationId = requestAnimationFrame(loop);
+}
+
+function startGame() {
+  cancelAnimationFrame(animationId);
+  resetGame();
+  keys.left = keys.right = false;
+  overlay.style.display = "none";
+  running = true;
+  lastTime = performance.now();
+  animationId = requestAnimationFrame(loop);
+}
+
+startBtn.addEventListener("click", startGame);
+
+document.addEventListener("keydown", e => {
+  if (["ArrowLeft", "ArrowRight", " "].includes(e.key)) {
+    e.preventDefault();
+  }
+  if (e.key === "ArrowLeft" || e.key.toLowerCase() === "a")
+    keys.left = true;
+  if (e.key === "ArrowRight" || e.key.toLowerCase() === "d")
+    keys.right = true;
+  if (e.key === " " && !running) startGame();
+});
+
+document.addEventListener("keyup", e => {
+  if (e.key === "ArrowLeft" || e.key.toLowerCase() === "a")
+    keys.left = false;
+  if (e.key === "ArrowRight" || e.key.toLowerCase() === "d")
+    keys.right = false;
+});
+
+function bindHold(id, direction) {
+  const btn = document.getElementById(id);
+  btn.addEventListener("pointerdown", e => {
+    e.preventDefault();
+    keys[direction] = true;
+    btn.setPointerCapture(e.pointerId);
+  });
+  const release = () => keys[direction] = false;
+  btn.addEventListener("pointerup", release);
+  btn.addEventListener("pointercancel", release);
+  btn.addEventListener("lostpointercapture", release);
+}
+
+bindHold("left", "left");
+bindHold("right", "right");
+
+resetGame();
+draw();
+</script>
+</body>
+</html>
